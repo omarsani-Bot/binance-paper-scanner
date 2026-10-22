@@ -73,13 +73,14 @@ def analyze_market(symbol):
         else:
             signal = "HOLD"
 
+        # দশমিকের পর ৬ ঘর রাউন্ডিং করা হয়েছে যাতে সূক্ষ্ম পার্থক্য নিখুঁত থাকে
         return {
             "Symbol": symbol,
             "Price (USDT)": round(latest['close'], 6),
-            "EMA9": round(latest['EMA9'], 4),
-            "EMA21": round(latest['EMA21'], 4),
+            "EMA9": round(latest['EMA9'], 6),
+            "EMA21": round(latest['EMA21'], 6),
             "RSI (14)": round(latest['RSI'], 2),
-            "MACD": round(latest['MACD'], 4),
+            "MACD": round(latest['MACD'], 6),
             "Signal": signal
         }
     except Exception:
@@ -90,8 +91,15 @@ if st.button("🔴 Scan Market Now", type="primary"):
     with st.spinner("Scanning top 70 USDT markets with EMA, RSI & MACD..."):
         try:
             markets = exchange.load_markets()
-            # কু-কয়েন থেকে সক্রিয় USDT পেয়ারগুলো থেকে প্রথম ৭০টি কয়েন স্বয়ংক্রিয়ভাবে সিলেক্ট করবে
-            symbols = [s for s in markets if s.endswith('/USDT') and markets[s]['active']][:70]
+            
+            # বাদ দেওয়া স্ট্যাবলকয়েনসমূহের তালিকা
+            stablecoins = ['USDC/USDT', 'BUSD/USDT', 'TUSD/USDT', 'DAI/USDT', 'FDUSD/USDT', 'USDE/USDT']
+            
+            # ফিল্টার: স্ট্যাবলকয়েন বাদ দিয়ে সক্রিয় ৭০টি পেয়ার ফেচ করা
+            symbols = [
+                s for s in markets 
+                if s.endswith('/USDT') and markets[s]['active'] and s not in stablecoins
+            ][:70]
             
             results = []
             for sym in symbols:
@@ -172,7 +180,7 @@ if "scan_df" in st.session_state and not st.session_state.scan_df.empty:
                 "Symbol": sym,
                 "Buy Price": details['buy_price'],
                 "Current Price": curr_p,
-                "Current Value ($)": round(val, 2),
+                "Current Value ($)": round(val, 6),
                 "Unrealized P/L ($)": round(pnl, 2)
             })
         st.table(pd.DataFrame(pos_data))
