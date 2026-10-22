@@ -22,7 +22,7 @@ st.info("Signals use a simple EMA(9)/EMA(21) crossover. This is not an AI model 
 
 @st.cache_resource
 def get_exchange():
-    return ccxt.binance({"enableRateLimit": True, "timeout": 20000, "options": {"defaultType": "spot"}})
+    return ccxt.kucoin({"enableRateLimit": True, "timeout": 20000, "options": {"defaultType": "spot"}})
 
 def scan_markets(exchange, limit, tf):
     markets = exchange.load_markets()
