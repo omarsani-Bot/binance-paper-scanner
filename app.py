@@ -87,15 +87,11 @@ def analyze_market(symbol):
 
 # Scan Button & Results
 if st.button("🔴 Scan Market Now", type="primary"):
-    with st.spinner("Scanning top USDT markets with EMA, RSI & MACD..."):
+    with st.spinner("Scanning top 70 USDT markets with EMA, RSI & MACD..."):
         try:
             markets = exchange.load_markets()
-            # এখানে আপনি চাইলে শুধু টপ কয়েন বা আপনার পছন্দের কয়েনগুলোর লিস্ট দিতে পারেন:
-            symbols = [
-                "BTC/USDT", "ETH/USDT", "SOL/USDT", "BNB/USDT", "XRP/USDT", 
-                "ADA/USDT", "DOGE/USDT", "NEAR/USDT", "AVAX/USDT", "LINK/USDT",
-                "MATIC/USDT", "DOT/USDT", "UNI/USDT", "ATOM/USDT", "LTC/USDT"
-            ]
+            # কু-কয়েন থেকে সক্রিয় USDT পেয়ারগুলো থেকে প্রথম ৭০টি কয়েন স্বয়ংক্রিয়ভাবে সিলেক্ট করবে
+            symbols = [s for s in markets if s.endswith('/USDT') and markets[s]['active']][:70]
             
             results = []
             for sym in symbols:
