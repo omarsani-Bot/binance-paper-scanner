@@ -90,7 +90,7 @@ if st.button("🔴 Scan Market Now", type="primary"):
     with st.spinner("Scanning top USDT markets with EMA, RSI & MACD..."):
         try:
             markets = exchange.load_markets()
-            symbols = [s for s in markets if s.endswith('/USDT') and markets[s]['active']][:50]
+            symbols = [s for s in markets if s.endswith('/USDT') and markets[s]['active']]
             
             results = []
             for sym in symbols:
