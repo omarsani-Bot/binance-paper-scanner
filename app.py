@@ -1,147 +1,179 @@
-import time
-from datetime import datetime, timezone
-import pandas as pd
 import streamlit as st
 import ccxt
+import pandas as pd
+import pandas_ta as ta
 
-st.set_page_config(page_title="Binance Paper Scanner", page_icon="📊", layout="wide")
-st.title("📊 Binance 50+ Market Scanner — PAPER MODE")
-st.caption("Public market data only • No API keys • No real orders • Educational demo")
+# Page configuration
+st.set_page_config(page_title="Multi-Indicator Crypto Scanner", layout="wide")
 
-with st.sidebar:
-    st.header("Settings")
-    market_count = st.slider("Markets to scan", 10, 100, 55, 5)
-    timeframe = st.selectbox("Candlestick timeframe", ["5m", "15m", "1h", "4h"], index=2)
-    refresh_seconds = st.selectbox("Refresh interval", [60, 120, 300], index=0)
-    starting_cash = st.number_input("Paper cash (USDT)", min_value=100.0, max_value=1000000.0, value=1000.0, step=100.0)
-    trade_usdt = st.number_input("Paper position size (USDT)", min_value=10.0, max_value=10000.0, value=50.0, step=10.0)
-    fee_pct = st.number_input("Estimated fee per side (%)", min_value=0.0, max_value=1.0, value=0.1, step=0.01)
-    auto_refresh = st.checkbox("Auto-refresh", value=False)
+# Initialize Session State for Paper Trading
+if "paper_cash" not in st.session_state:
+    st.session_state.paper_cash = 1000.0
+if "paper_positions" not in st.session_state:
+    st.session_state.paper_positions = {}  # {symbol: {'amount': float, 'buy_price': float}}
 
-st.info("Signals use a simple EMA(9)/EMA(21) crossover. This is not an AI model and does not predict profits. Paper trades are illustrative only.")
-
+# Connect to KuCoin Exchange
 @st.cache_resource
 def get_exchange():
     return ccxt.kucoin({"enableRateLimit": True, "timeout": 20000, "options": {"defaultType": "spot"}})
 
-def scan_markets(exchange, limit, tf):
-    markets = exchange.load_markets()
-    tickers = exchange.fetch_tickers()
-    candidates = []
-    for symbol, market in markets.items():
-        if market.get("spot") and market.get("quote") == "USDT" and market.get("active") and symbol in tickers:
-            qv = tickers[symbol].get("quoteVolume") or 0
-            last = tickers[symbol].get("last")
-            if last and qv > 0:
-                candidates.append((symbol, float(qv)))
-    candidates.sort(key=lambda x: x[1], reverse=True)
-    selected = [s for s, _ in candidates[:limit]]
-    rows = []
-    progress = st.progress(0, text="Scanning public Binance spot markets...")
-    for i, symbol in enumerate(selected):
-        try:
-            candles = exchange.fetch_ohlcv(symbol, timeframe=tf, limit=60)
-            if len(candles) < 30:
-                continue
-            df = pd.DataFrame(candles, columns=["time","open","high","low","close","volume"])
-            # Exclude the currently forming candle
-            close = df["close"].iloc[:-1].astype(float)
-            ema9 = close.ewm(span=9, adjust=False).mean()
-            ema21 = close.ewm(span=21, adjust=False).mean()
-            prev_diff = float(ema9.iloc[-2] - ema21.iloc[-2])
-            curr_diff = float(ema9.iloc[-1] - ema21.iloc[-1])
-            signal = "BUY" if prev_diff <= 0 and curr_diff > 0 else ("SELL" if prev_diff >= 0 and curr_diff < 0 else "HOLD")
-            last = float(close.iloc[-1])
-            rows.append({"Symbol": symbol, "Price (USDT)": last, "EMA 9": float(ema9.iloc[-1]), "EMA 21": float(ema21.iloc[-1]), "Signal": signal, "Candles": len(close)})
-        except Exception as e:
-            rows.append({"Symbol": symbol, "Price (USDT)": None, "EMA 9": None, "EMA 21": None, "Signal": "ERROR", "Candles": 0, "Error": str(e)[:100]})
-        progress.progress((i+1)/max(len(selected),1), text=f"Scanned {i+1}/{len(selected)} markets")
-    progress.empty()
-    return pd.DataFrame(rows)
+exchange = get_exchange()
 
-if "paper_cash" not in st.session_state:
-    st.session_state.paper_cash = float(starting_cash)
-    st.session_state.positions = {}
-    st.session_state.trades = []
-    st.session_state.last_signals = {}
+# Sidebar Settings
+st.sidebar.header("⚙️ Scanner Settings")
+timeframe = st.sidebar.selectbox("Timeframe", ["15m", "1h", "4h", "1d"], index=1)
+trade_size = st.sidebar.number_input("Paper Position Size (USDT)", min_value=10.0, max_value=1000.0, value=100.0, step=10.0)
 
-if st.button("🔄 Scan now", type="primary"):
-    st.session_state.scan_now = True
+if st.sidebar.button("Reset Paper Portfolio"):
+    st.session_state.paper_cash = 1000.0
+    st.session_state.paper_positions = {}
+    st.sidebar.success("Portfolio Reset to $1,000 USDT!")
 
-should_scan = st.session_state.get("scan_now", False) or "results" not in st.session_state
-if should_scan:
+# Main Title & Info
+st.title("🚀 Advanced Crypto Market Scanner (EMA + RSI + MACD)")
+st.caption("Real-Time Multi-Indicator Scanner for KuCoin Spot Markets")
+
+# Function to fetch and calculate technical indicators
+def analyze_market(symbol):
     try:
-        exchange = get_exchange()
-        st.session_state.results = scan_markets(exchange, market_count, timeframe)
-        st.session_state.last_scan = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S UTC")
-        st.session_state.scan_now = False
-    except Exception as e:
-        st.error(f"Could not get market data: {e}")
-        st.caption("Check internet connection and try again later.")
+        ohlcv = exchange.fetch_ohlcv(symbol, timeframe=timeframe, limit=100)
+        df = pd.DataFrame(ohlcv, columns=['time', 'open', 'high', 'low', 'close', 'volume'])
+        
+        # Calculate Indicators using pandas_ta / pandas
+        df['EMA9'] = ta.ema(df['close'], length=9)
+        df['EMA21'] = ta.ema(df['close'], length=21)
+        df['RSI'] = ta.rsi(df['close'], length=14)
+        
+        macd = ta.macd(df['close'], fast=12, slow=26, signal=9)
+        df['MACD'] = macd['MACD_12_26_9']
+        df['MACD_signal'] = macd['MACDs_12_26_9']
 
-if "results" in st.session_state:
-    results = st.session_state.results.copy()
-    st.caption(f"Last scan: {st.session_state.get('last_scan','not yet')} • {len(results)} rows")
-    good = results[results["Signal"].isin(["BUY","SELL"])]
-    c1,c2,c3,c4 = st.columns(4)
-    c1.metric("Markets scanned", len(results))
-    c2.metric("BUY signals", int((results["Signal"]=="BUY").sum()))
-    c3.metric("SELL signals", int((results["Signal"]=="SELL").sum()))
-    c4.metric("Paper cash", f"${st.session_state.paper_cash:,.2f}")
-    st.subheader("Market signals")
-    st.dataframe(results, use_container_width=True, hide_index=True)
-    st.download_button("Download scan CSV", results.to_csv(index=False).encode("utf-8"), "market_scan.csv", "text/csv")
+        latest = df.iloc[-1]
+        prev = df.iloc[-2]
 
-    st.subheader("Paper trading (manual simulation)")
-    st.write("Choose a BUY signal to simulate opening a position. SELL closes a paper position if one exists. No order is sent to Binance.")
-    choices = results[results["Signal"]=="BUY"]["Symbol"].tolist()
-    buy_symbol = st.selectbox("Symbol to paper-buy", ["— choose —"] + choices)
-    if st.button("Simulate BUY") and buy_symbol != "— choose —":
-        row = results[results["Symbol"]==buy_symbol].iloc[0]
-        price = float(row["Price (USDT)"])
-        cost = min(float(trade_usdt), st.session_state.paper_cash)
-        fee = cost * float(fee_pct)/100
-        if cost > fee and buy_symbol not in st.session_state.positions:
-            qty = (cost-fee)/price
-            st.session_state.paper_cash -= cost
-            st.session_state.positions[buy_symbol] = {"qty": qty, "entry": price, "cost": cost, "fee_pct": float(fee_pct)}
-            st.session_state.trades.append({"Time UTC": datetime.now(timezone.utc).isoformat(), "Action":"PAPER BUY", "Symbol":buy_symbol, "Price":price, "Qty":qty, "Fee":fee, "Note":"Simulated; not a real order"})
-            st.success(f"Simulated buy: {buy_symbol} at {price:g} USDT")
+        # Multi-Indicator Filter Logic
+        ema_bullish = latest['EMA9'] > latest['EMA21']
+        rsi_valid = 50 <= latest['RSI'] <= 70  # Healthy buying momentum, not overbought
+        macd_bullish = latest['MACD'] > latest['MACD_signal']
+
+        ema_bearish = latest['EMA9'] < latest['EMA21']
+        macd_bearish = latest['MACD'] < latest['MACD_signal']
+
+        # Determine Signal
+        if ema_bullish and rsi_valid and macd_bullish:
+            signal = "BUY"
+        elif ema_bearish and macd_bearish:
+            signal = "SELL"
         else:
-            st.warning("Not enough paper cash or a paper position already exists for this symbol.")
+            signal = "HOLD"
 
-    positions = st.session_state.positions
-    if positions:
-        pos_rows=[]
-        for sym, p in positions.items():
-            found = results[results["Symbol"]==sym]
-            mark = float(found.iloc[0]["Price (USDT)"]) if len(found) and pd.notna(found.iloc[0]["Price (USDT)"]) else p["entry"]
-            value = p["qty"]*mark
-            est_sell_fee = value*p["fee_pct"]/100
-            pnl = value-est_sell_fee-p["cost"]
-            pos_rows.append({"Symbol":sym,"Entry":p["entry"],"Mark":mark,"Quantity":p["qty"],"Cost":p["cost"],"Estimated P/L after sell fee":pnl})
-        st.dataframe(pd.DataFrame(pos_rows), use_container_width=True, hide_index=True)
-        close_symbol = st.selectbox("Position to close", ["— choose —"] + list(positions.keys()))
-        if st.button("Simulate SELL / close") and close_symbol != "— choose —":
-            p=positions[close_symbol]
-            found=results[results["Symbol"]==close_symbol]
-            price=float(found.iloc[0]["Price (USDT)"]) if len(found) and pd.notna(found.iloc[0]["Price (USDT)"]) else p["entry"]
-            gross=p["qty"]*price
-            fee=gross*p["fee_pct"]/100
-            proceeds=gross-fee
-            pnl=proceeds-p["cost"]
-            st.session_state.paper_cash += proceeds
-            st.session_state.trades.append({"Time UTC":datetime.now(timezone.utc).isoformat(),"Action":"PAPER SELL","Symbol":close_symbol,"Price":price,"Qty":p["qty"],"Fee":fee,"Note":f"Simulated P/L {pnl:.4f} USDT; no real order"})
-            del st.session_state.positions[close_symbol]
-            st.success(f"Closed paper position. Estimated P/L: {pnl:.4f} USDT (before spread/slippage).")
-    if st.session_state.trades:
-        st.subheader("Paper trade history")
-        st.dataframe(pd.DataFrame(st.session_state.trades), use_container_width=True, hide_index=True)
-        st.download_button("Download trade history CSV", pd.DataFrame(st.session_state.trades).to_csv(index=False).encode("utf-8"), "paper_trades.csv", "text/csv")
-    if auto_refresh:
-        st.caption(f"Auto-refresh is enabled ({refresh_seconds}s). Keep the session open.")
-        time.sleep(refresh_seconds)
-        st.rerun()
+        return {
+            "Symbol": symbol,
+            "Price (USDT)": round(latest['close'], 6),
+            "EMA9": round(latest['EMA9'], 4),
+            "EMA21": round(latest['EMA21'], 4),
+            "RSI (14)": round(latest['RSI'], 2),
+            "MACD": round(latest['MACD'], 4),
+            "Signal": signal
+        }
+    except Exception:
+        return None
 
-st.divider()
-st.caption("Safety: this project has no API key fields and no live-order functions. Restarting the app resets in-memory paper cash/positions. It is a learning prototype, not financial advice.")
+# Scan Button & Results
+if st.button("🔴 Scan Market Now", type="primary"):
+    with st.spinner("Scanning top USDT markets with EMA, RSI & MACD..."):
+        try:
+            markets = exchange.load_markets()
+            symbols = [s for s in markets if s.endswith('/USDT') and markets[s]['active']][:50]
+            
+            results = []
+            for sym in symbols:
+                res = analyze_market(sym)
+                if res:
+                    results.append(res)
+
+            st.session_state.scan_df = pd.DataFrame(results)
+        except Exception as e:
+            st.error(f"Error fetching data: {e}")
+
+# Display Scanner Results
+if "scan_df" in st.session_state and not st.session_state.scan_df.empty:
+    df_res = st.session_state.scan_df
+    
+    st.subheader(f"📊 Market Signals ({len(df_res)} Markets Analyzed)")
+    
+    # Summary Dashboard Metrics
+    col1, col2, col3, col4 = st.columns(4)
+    col1.metric("BUY Signals", len(df_res[df_res['Signal'] == 'BUY']))
+    col2.metric("SELL Signals", len(df_res[df_res['Signal'] == 'SELL']))
+    col3.metric("Paper Cash", f"${st.session_state.paper_cash:.2f}")
+    col4.metric("Open Positions", len(st.session_state.paper_positions))
+
+    # Signal Table
+    st.dataframe(df_res, use_container_width=True)
+
+    st.markdown("---")
+    
+    # Paper Trading Simulation Section
+    st.subheader("💡 Paper Trading Simulation")
+    
+    col_buy, col_sell = st.columns(2)
+
+    # Buy Execution
+    with col_buy:
+        buy_candidates = df_res[df_res['Signal'] == 'BUY']['Symbol'].tolist()
+        selected_buy = st.selectbox("Choose a BUY Signal Coin", ["-- Select --"] + buy_candidates)
+        
+        if st.button("Simulate BUY"):
+            if selected_buy != "-- Select --":
+                price = df_res[df_res['Symbol'] == selected_buy]['Price (USDT)'].values[0]
+                if st.session_state.paper_cash >= trade_size:
+                    st.session_state.paper_cash -= trade_size
+                    st.session_state.paper_positions[selected_buy] = {
+                        'amount': trade_size / price,
+                        'buy_price': price
+                    }
+                    st.success(f"Successfully Paper-Bought {selected_buy} at ${price}")
+                    st.rerun()
+                else:
+                    st.error("Insufficient Paper Cash!")
+            else:
+                st.warning("Please select a valid coin to buy!")
+
+    # Sell Execution
+    with col_sell:
+        active_positions = list(st.session_state.paper_positions.keys())
+        selected_sell = st.selectbox("Choose Open Position to Close", ["-- Select --"] + active_positions)
+        
+        if st.button("Simulate SELL / Close"):
+            if selected_sell != "-- Select --":
+                current_price = df_res[df_res['Symbol'] == selected_sell]['Price (USDT)'].values[0] if selected_sell in df_res['Symbol'].values else st.session_state.paper_positions[selected_sell]['buy_price']
+                pos = st.session_state.paper_positions.pop(selected_sell)
+                return_val = pos['amount'] * current_price
+                pnl = return_val - trade_size
+                st.session_state.paper_cash += return_val
+                
+                if pnl >= 0:
+                    st.success(f"Closed {selected_sell}! Profit: +${pnl:.2f}")
+                else:
+                    st.error(f"Closed {selected_sell}! Loss: -${abs(pnl):.2f}")
+                st.rerun()
+            else:
+                st.warning("Please select a valid position to close!")
+
+    # Open Positions Overview
+    if st.session_state.paper_positions:
+        st.subheader("📈 Active Paper Positions")
+        pos_data = []
+        for sym, details in st.session_state.paper_positions.items():
+            curr_p = df_res[df_res['Symbol'] == sym]['Price (USDT)'].values[0] if sym in df_res['Symbol'].values else details['buy_price']
+            val = details['amount'] * curr_p
+            pnl = val - trade_size
+            pos_data.append({
+                "Symbol": sym,
+                "Buy Price": details['buy_price'],
+                "Current Price": curr_p,
+                "Current Value ($)": round(val, 2),
+                "Unrealized P/L ($)": round(pnl, 2)
+            })
+        st.table(pd.DataFrame(pos_data))
