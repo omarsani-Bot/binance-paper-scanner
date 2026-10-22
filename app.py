@@ -1,7 +1,6 @@
 import streamlit as st
 import ccxt
 import pandas as pd
-import pandas_ta as ta
 
 # Page configuration
 st.set_page_config(page_title="Multi-Indicator Crypto Scanner", layout="wide")
@@ -10,7 +9,7 @@ st.set_page_config(page_title="Multi-Indicator Crypto Scanner", layout="wide")
 if "paper_cash" not in st.session_state:
     st.session_state.paper_cash = 1000.0
 if "paper_positions" not in st.session_state:
-    st.session_state.paper_positions = {}  # {symbol: {'amount': float, 'buy_price': float}}
+    st.session_state.paper_positions = {}
 
 # Connect to KuCoin Exchange
 @st.cache_resource
@@ -33,33 +32,40 @@ if st.sidebar.button("Reset Paper Portfolio"):
 st.title("🚀 Advanced Crypto Market Scanner (EMA + RSI + MACD)")
 st.caption("Real-Time Multi-Indicator Scanner for KuCoin Spot Markets")
 
-# Function to fetch and calculate technical indicators
+# Function to calculate RSI without external dependency
+def calculate_rsi(series, period=14):
+    delta = series.diff()
+    gain = (delta.where(delta > 0, 0)).rolling(window=period).mean()
+    loss = (-delta.where(delta < 0, 0)).rolling(window=period).mean()
+    rs = gain / loss
+    return 100 - (100 / (1 + rs))
+
+# Function to fetch and analyze
 def analyze_market(symbol):
     try:
         ohlcv = exchange.fetch_ohlcv(symbol, timeframe=timeframe, limit=100)
         df = pd.DataFrame(ohlcv, columns=['time', 'open', 'high', 'low', 'close', 'volume'])
         
-        # Calculate Indicators using pandas_ta / pandas
-        df['EMA9'] = ta.ema(df['close'], length=9)
-        df['EMA21'] = ta.ema(df['close'], length=21)
-        df['RSI'] = ta.rsi(df['close'], length=14)
+        # Calculate Indicators
+        df['EMA9'] = df['close'].ewm(span=9, adjust=False).mean()
+        df['EMA21'] = df['close'].ewm(span=21, adjust=False).mean()
+        df['RSI'] = calculate_rsi(df['close'], period=14)
         
-        macd = ta.macd(df['close'], fast=12, slow=26, signal=9)
-        df['MACD'] = macd['MACD_12_26_9']
-        df['MACD_signal'] = macd['MACDs_12_26_9']
+        exp1 = df['close'].ewm(span=12, adjust=False).mean()
+        exp2 = df['close'].ewm(span=26, adjust=False).mean()
+        df['MACD'] = exp1 - exp2
+        df['MACD_signal'] = df['MACD'].ewm(span=9, adjust=False).mean()
 
         latest = df.iloc[-1]
-        prev = df.iloc[-2]
 
         # Multi-Indicator Filter Logic
         ema_bullish = latest['EMA9'] > latest['EMA21']
-        rsi_valid = 50 <= latest['RSI'] <= 70  # Healthy buying momentum, not overbought
+        rsi_valid = 50 <= latest['RSI'] <= 70
         macd_bullish = latest['MACD'] > latest['MACD_signal']
 
         ema_bearish = latest['EMA9'] < latest['EMA21']
         macd_bearish = latest['MACD'] < latest['MACD_signal']
 
-        # Determine Signal
         if ema_bullish and rsi_valid and macd_bullish:
             signal = "BUY"
         elif ema_bearish and macd_bearish:
@@ -102,24 +108,18 @@ if "scan_df" in st.session_state and not st.session_state.scan_df.empty:
     
     st.subheader(f"📊 Market Signals ({len(df_res)} Markets Analyzed)")
     
-    # Summary Dashboard Metrics
     col1, col2, col3, col4 = st.columns(4)
     col1.metric("BUY Signals", len(df_res[df_res['Signal'] == 'BUY']))
     col2.metric("SELL Signals", len(df_res[df_res['Signal'] == 'SELL']))
     col3.metric("Paper Cash", f"${st.session_state.paper_cash:.2f}")
     col4.metric("Open Positions", len(st.session_state.paper_positions))
 
-    # Signal Table
     st.dataframe(df_res, use_container_width=True)
-
     st.markdown("---")
     
-    # Paper Trading Simulation Section
     st.subheader("💡 Paper Trading Simulation")
-    
     col_buy, col_sell = st.columns(2)
 
-    # Buy Execution
     with col_buy:
         buy_candidates = df_res[df_res['Signal'] == 'BUY']['Symbol'].tolist()
         selected_buy = st.selectbox("Choose a BUY Signal Coin", ["-- Select --"] + buy_candidates)
@@ -140,7 +140,6 @@ if "scan_df" in st.session_state and not st.session_state.scan_df.empty:
             else:
                 st.warning("Please select a valid coin to buy!")
 
-    # Sell Execution
     with col_sell:
         active_positions = list(st.session_state.paper_positions.keys())
         selected_sell = st.selectbox("Choose Open Position to Close", ["-- Select --"] + active_positions)
@@ -161,7 +160,6 @@ if "scan_df" in st.session_state and not st.session_state.scan_df.empty:
             else:
                 st.warning("Please select a valid position to close!")
 
-    # Open Positions Overview
     if st.session_state.paper_positions:
         st.subheader("📈 Active Paper Positions")
         pos_data = []
