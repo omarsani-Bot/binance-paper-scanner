@@ -90,8 +90,12 @@ if st.button("🔴 Scan Market Now", type="primary"):
     with st.spinner("Scanning top USDT markets with EMA, RSI & MACD..."):
         try:
             markets = exchange.load_markets()
-            symbols = [s for s in markets if s.endswith('/USDT') and markets[s]['active']][:100]
-
+            # এখানে আপনি চাইলে শুধু টপ কয়েন বা আপনার পছন্দের কয়েনগুলোর লিস্ট দিতে পারেন:
+            symbols = [
+                "BTC/USDT", "ETH/USDT", "SOL/USDT", "BNB/USDT", "XRP/USDT", 
+                "ADA/USDT", "DOGE/USDT", "NEAR/USDT", "AVAX/USDT", "LINK/USDT",
+                "MATIC/USDT", "DOT/USDT", "UNI/USDT", "ATOM/USDT", "LTC/USDT"
+            ]
             
             results = []
             for sym in symbols:
